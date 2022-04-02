@@ -20,20 +20,21 @@ import frc.robot.models.VisionObject;
 // import com.kauailabs.navx.frc.AHRS;  
 // import edu.wpi.first.wpilibj.SPI;
 
-/** 
-  Copy of FetchPowerCellCommand with modified contructor to take cargo color. 
-  <p> Drives to closest cargo. CLOSED-LOOP.
-*/
+/**
+ * Copy of FetchPowerCellCommand with modified contructor to take cargo color.
+ * <p>
+ * Drives to closest cargo. CLOSED-LOOP.
+ */
 
 public class FetchCargoCommand extends Command {
   PIDController strafeController;
-  PIDController forwardController; 
+  PIDController forwardController;
   double gyroAngle;
-  double angle; 
+  double angle;
   double desiredAngle;
   double setPointAngle = 6;
   boolean isClose;
-  double v; // velocity? 3/14
+  double forwardControllerVelocity = -0.5; 
 
   String cargoColor; // blue or red, gets passed into constructor
   VisionObject closestObject;
@@ -42,45 +43,35 @@ public class FetchCargoCommand extends Command {
 
   public FetchCargoCommand(String cargoColor) {
     requires(Robot.drivetrainSubsystem);
-    //initPID();
-    checkUpdateCargoColor(cargoColor);     
   }
 
   public FetchCargoCommand(String cargoColor, double timeout) {
     super(timeout);
     requires(Robot.drivetrainSubsystem);
-    //initPID();
-    checkUpdateCargoColor(cargoColor);     
-
   }
 
-  private void checkUpdateCargoColor(String color) {
-    // checks cargoColor given to constructor, normalizes case
-    if (color.equalsIgnoreCase("blue")) {
-      this.cargoColor = "blue";
-    } else if (color.equalsIgnoreCase("red")) {
-      this.cargoColor = "red"; 
-    } else {
-      // TODO some time of catch all end case that deals with a non red/blue input?
-    }
+  public FetchCargoCommand(String cargoColor, double timeout, double forwardVelocity) {
+    super(timeout);
+    requires(Robot.drivetrainSubsystem);
+    this.forwardControllerVelocity = forwardVelocity; 
   }
 
-  protected void initPID(){
+  protected void initPID() {
     strafeController = new PIDController(0.011, 0.0, 0.0); // TODO update constants
     forwardController = new PIDController(0.05, 0.01, 0.0); // TODO update constants
-   
   }
 
   @Override
   protected void initialize() {
     initPID();
+    checkUpdateCargoColor(this.cargoColor);
     System.out.println("FCC start");
-    
+
     // SmartDashboard.putNumber("Vision angle", angle);
     // SmartDashboard.putNumber("Desired angle", desiredAngle);
     // SmartDashboard.putNumber("initial angle", gyroAngle);
     // SmartDashboard.putNumber("SetPoint angle", setPointAngle);
-    
+
     Robot.drivetrainSubsystem.resetKinematics(Vector2.ZERO, 0);
     System.out.println("Initialized FCC");
 
@@ -89,57 +80,59 @@ public class FetchCargoCommand extends Command {
 
   @Override
   protected void execute() {
+    // repeatedly gets the nearest cargo of the given color
     Robot.objectTrackerSubsystem.data();
     closestObject = Robot.objectTrackerSubsystem.getClosestObject(cargoColor);
 
     double forward = 0;
     double strafe = 0;
 
+    // quits command if no objects are in frame
     if (closestObject == null) {
       SmartDashboard.putNumber("driveRotation", 99);
-      Robot.drivetrainSubsystem.holonomicDrive(new Vector2(0,0), 0.0, false);
-      return; // no object found
+      Robot.drivetrainSubsystem.holonomicDrive(new Vector2(0, 0), 0.0, false);
+      return;
     }
-    
+
     // System.out.println("Closest z: " + closestObject.z);
-    closestObject.motionCompensate(Robot.drivetrainSubsystem, true);
-  
+    // latenncy does need to be remeasured so this compensation may not be 100% accurate
+    closestObject.motionCompensate(Robot.drivetrainSubsystem, true); 
+
     // STRAFE
-    strafeController.setSetpoint(closestObject.x);
+    // strafeController.setSetpoint(closestObject.x) sets a POSIITON setpoint, even though it is later passed into holonomicDrive() as a VELOCITY
+    strafeController.setSetpoint(closestObject.x); 
     strafe = strafeController.calculate(0);
 
-    if(strafe > 1){
+    if (strafe > 1) {
       strafe = 1;
-    }else if (strafe < -1){
+    } else if (strafe < -1) {
       strafe = -1;
     }
 
     SmartDashboard.putNumber("driveStrafe", strafe);
 
     // FORWARD
-    //forwardController.setSetpoint(closestObject.z-RobotMap.TARGET_TRIGGER_DISTANCE); // TODO figure out how to implement code that begins intake process 
+    // Forward velocity is set contant below and does NOT depend on position
+    // forwardController.setSetpoint(closestObject.z-RobotMap.TARGET_TRIGGER_DISTANCE);
+    // TODO figure out how to implement code that begins intake process
     forward = forwardController.calculate(0);
-
-    if(forward > 1){
+    
+    if (forward > 1) {
       forward = 1;
-    }else if (forward < -1){
+    } else if (forward < -1) {
       forward = -1;
     }
 
     SmartDashboard.putNumber("driveForward", forward);
-    
+
     final boolean robotOriented = false;
 
-    //final Vector2 translation = new Vector2(-forward, -strafe*0);
-      
-    //  if (closestObject.z < 60) {
-    //    isClose = true;
-    // //   v = -0.05;
-     
-    //  }
+    /* holonomicDrive() takes a vector2 VELOCITY - NOT position
+     * explains why there are checks that set forward and strafe to <1 and >-1 to
+     * keep within motor speed range
+     */
 
-    v = -0.5; 
-    final Vector2 translation = new Vector2(v, strafe); // only goes forward 0.5 each time execute() runs?
+    final Vector2 translation = new Vector2(forwardControllerVelocity, strafe);
 
     // System.out.println("translation: " + translation);
     Robot.drivetrainSubsystem.holonomicDrive(translation, 0.0, robotOriented);
@@ -152,37 +145,38 @@ public class FetchCargoCommand extends Command {
       return false;
     } // TODO could lose sight for small amount of time causing command to finish early
     
-    // boolean done = Math.abs(closestObject.z-RobotMap.TARGET_TRIGGER_DISTANCE) <= tolerance;
     isClose = Math.abs(closestObject.z - RobotMap.TARGET_TRIGGER_DISTANCE) <= tolerance;
-    // if (done) {
-    //   System.out.println("done FCC");
-    // }
+
     if (isClose) {
       System.out.println("FCC done");
     }
+
     return isClose;
-    // return false;
-    // boolean isFinished = super.isTimedOut();
-    // if (isFinished) {
-    //   SmartDashboard.putNumber("totalRotation", totalRotation);
-    // }
-    //  return isFinished;
     // TODO: add the actual completion test code
   }
 
   @Override
   protected void end() {
-    Robot.vision.ledOff();
-    // Robot.drivetrainSubsystem.holonomicDrive(new Vector2(-100.0, 0.0), 0, true);
-    // System.out.println("FCC end() drive forward extra 5 in");
-
+    // Robot.vision.ledOff();
     Robot.drivetrainSubsystem.holonomicDrive(Vector2.ZERO, 0, true);
     System.out.println("FCC end()");
   }
 
-  // Called when another command which requires one or more of the same subsystems is scheduled to run
+  // Called when another command which requires one or more of the same subsystems
+  // is scheduled to run
   @Override
   protected void interrupted() {
     end();
+  }
+
+  private void checkUpdateCargoColor(String color) {
+    // checks cargoColor given to constructor, normalizes case
+    if (color.equalsIgnoreCase("blue")) {
+      this.cargoColor = "blue";
+    } else if (color.equalsIgnoreCase("red")) {
+      this.cargoColor = "red";
+    } else {
+      // TODO some time of catch all end case that deals with a non red/blue input?
+    }
   }
 }
